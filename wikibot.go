@@ -149,7 +149,10 @@ func escapeQuery(text string) string {
 	// 	log.Fatal(err)
 	// }
 	// return reg.ReplaceAllString(text, "")
-	return strings.Replace(text, "\"", "", -1)
+	excapedText := strings.Replace(text, "\"", "", -1)
+	excapedText = strings.Replace(excapedText, "'", "", -1)
+
+	return excapedText
 }
 
 func min(a, b int) int {
