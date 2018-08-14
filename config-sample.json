@@ -1,0 +1,7 @@
+{
+  "DiscordBotKey": "",
+  "TimeOut": 10000,
+  "MaxChars": 500,
+  "MaxSentences": 5,
+  "WarningChars": 200
+}
