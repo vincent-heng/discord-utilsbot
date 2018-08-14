@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/knakk/sparql"
@@ -102,6 +103,9 @@ func fetchWikipediaAbstract(query string, faultTolerant bool) string {
 
 	query = escapeQuery(query)
 	log.Printf("Escaped query: %v", query)
+	if !hasLetter(query) {
+		return "Bad request :unamused:"
+	}
 
 	formattedQuery := ""
 	if !faultTolerant {
@@ -153,6 +157,15 @@ func escapeQuery(text string) string {
 	excapedText = strings.Replace(excapedText, "'", "", -1)
 
 	return excapedText
+}
+
+func hasLetter(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func min(a, b int) int {
