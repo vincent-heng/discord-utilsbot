@@ -157,7 +157,8 @@ func escapeQuery(text string) string {
 	excapedText = strings.Replace(excapedText, "'", "", -1)
 	excapedText = strings.Replace(excapedText, "\\", "", -1)
 	excapedText = strings.Replace(excapedText, "*", "", -1)
-	excapedText = excapedText[:min(35, len(excapedText))]
+
+	excapedText = excapedText[:min(34+len(excapedText)%2, len(excapedText))]
 	return excapedText
 }
 
