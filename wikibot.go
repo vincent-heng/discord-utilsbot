@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -34,6 +36,8 @@ func main() {
 		log.Fatal("Can't load config file:", err)
 	}
 	configuration = &conf
+
+	rand.Seed(time.Now().UTC().UnixNano())
 
 	// Discord
 	dg, err := discordgo.New("Bot " + configuration.DiscordBotKey)
@@ -70,7 +74,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	if strings.HasPrefix(m.Content, "!wiki") {
+	if strings.HasPrefix(m.Content, "!wiki ") {
 		name := strings.TrimSpace(strings.TrimPrefix(m.Content, "!wiki"))
 		log.Printf("Request: %v", name)
 
@@ -89,7 +93,54 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 		// Send
 		s.ChannelMessageSend(m.ChannelID, abstract)
+	} else if m.Content == "!wiki" {
+		// Random page
+		log.Printf("Request a random page")
+
+		abstract := fetchRandomWikipediaAbstract()
+
+		log.Printf("Response: %v", abstract)
+
+		// Send
+		s.ChannelMessageSend(m.ChannelID, abstract)
 	}
+}
+
+func fetchRandomWikipediaAbstract() string {
+	repo, err := sparql.NewRepo("http://fr.dbpedia.org/sparql",
+		sparql.DigestAuth("dba", "dba"),
+		sparql.Timeout(time.Millisecond*configuration.TimeOut),
+	)
+	if err != nil {
+		log.Println(err)
+		return "Server unavailable :confused:"
+	}
+
+	//	nbWikipediaPages := 185404515 // SELECT (COUNT(?s) AS ?triples) WHERE { ?s ?p ?o }
+	nbWikipediaPages := 10000 // Perf issues
+	someRandomNumber := rand.Intn(nbWikipediaPages)
+
+	log.Printf("Random number generated: %v", someRandomNumber)
+
+	formattedQuery := `SELECT distinct ?label ?abstract WHERE {
+		?categorie dbpedia-owl:abstract ?abstract .
+		?categorie rdfs:label ?label
+		filter langMatches(lang(?abstract),'fr')
+	}
+	ORDER BY ?s OFFSET ` + strconv.Itoa(someRandomNumber) + ` LIMIT 1
+	`
+
+	res, err := repo.Query(formattedQuery)
+	if err != nil {
+		log.Println(err)
+		return "Server unavailable :confused:"
+	}
+
+	str := "No content"
+	if len(res.Results.Bindings) > 0 && res.Results.Bindings[0]["label"].Value != "" && res.Results.Bindings[0]["abstract"].Value != "" {
+		str = res.Results.Bindings[0]["label"].Value + " : " + res.Results.Bindings[0]["abstract"].Value
+	}
+	return limitText(str)
 }
 
 func fetchWikipediaAbstract(query string, faultTolerant bool) string {
@@ -98,7 +149,8 @@ func fetchWikipediaAbstract(query string, faultTolerant bool) string {
 		sparql.Timeout(time.Millisecond*configuration.TimeOut),
 	)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return "Server unavailable :confused:"
 	}
 
 	query = escapeQuery(query)
@@ -112,18 +164,21 @@ func fetchWikipediaAbstract(query string, faultTolerant bool) string {
 		formattedQuery = `SELECT ?abstract WHERE {
 	       ?categorie rdfs:label "` + query + `"@fr .
 	       ?categorie dbpedia-owl:abstract ?abstract
+				 filter langMatches(lang(?abstract),'fr')
 	    } LIMIT 1`
 	} else {
 		formattedQuery = `SELECT ?abstract WHERE {
 	       ?categorie rdfs:label ?mylabel .
 	       ?mylabel bif:contains "'` + query + `'" .
 	       ?categorie dbpedia-owl:abstract ?abstract
+				 filter langMatches(lang(?abstract),'fr')
 	    } LIMIT 1`
 
 	}
 	res, err := repo.Query(formattedQuery)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return "Server unavailable :confused:"
 	}
 
 	str := "No content"
@@ -153,13 +208,13 @@ func escapeQuery(text string) string {
 	// 	log.Fatal(err)
 	// }
 	// return reg.ReplaceAllString(text, "")
-	excapedText := strings.Replace(text, "\"", "", -1)
-	excapedText = strings.Replace(excapedText, "'", "", -1)
-	excapedText = strings.Replace(excapedText, "\\", "", -1)
-	excapedText = strings.Replace(excapedText, "*", "", -1)
+	escapedText := strings.Replace(text, "\"", "", -1)
+	escapedText = strings.Replace(escapedText, "'", "", -1)
+	escapedText = strings.Replace(escapedText, "\\", "", -1)
+	escapedText = strings.Replace(escapedText, "*", "", -1)
 
-	excapedText = excapedText[:min(34+len(excapedText)%2, len(excapedText))]
-	return excapedText
+	escapedText = escapedText[:min(34+len(escapedText)%2, len(escapedText))]
+	return escapedText
 }
 
 func hasLetter(s string) bool {
