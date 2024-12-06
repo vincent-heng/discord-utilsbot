@@ -1,0 +1,25 @@
+- name: Deploy or update the app
+  hosts: localhost
+  vars:
+    git_repo_url: "git@github.com:vincent-heng/discord-utilsbot.git"
+    app_dir: "~/apps/discord-utilsbot"  # Target directory
+    branch: "master"
+  tasks:
+    - name: Clone or update the Git repository
+      git:
+        repo: "{{ git_repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ branch }}"
+        update: yes
+
+    - name: Install go dependencies
+      ansible.builtin.shell:
+        cmd: go mod tidy
+        chdir: "{{ app_dir }}"
+
+    - name: From config-sample.json generate config.json
+      ansible.builtin.copy:
+        src: "{{ app_dir }}/config-sample.json"
+        dest: "{{ app_dir }}/config.json"
+        remote_src: yes
+        force: no

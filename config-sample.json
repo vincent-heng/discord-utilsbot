@@ -1,5 +1,6 @@
 {
   "DiscordBotKey": "",
+  "ApiID": "",
   "TimeOut": 10000,
   "MaxChars": 500,
   "MaxSentences": 5,

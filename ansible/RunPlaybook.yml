@@ -1,0 +1,28 @@
+- name: Run the app
+  hosts: localhost
+  vars:
+    app_dir: "~/apps/discord-utilsbot"  # Target directory
+    log_dir: "~/log/discord-utilsbot"  # Log directory
+  tasks:
+    - name: Ensure log_dir exists
+      file:
+        path: "{{ log_dir }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Check if the app is already running
+      ansible.builtin.shell: |
+        pgrep -f "discordUtils" || true
+      register: app_pid
+      ignore_errors: true
+
+    - name: Kill the running app if it exists
+      ansible.builtin.shell: |
+        kill -9 {{ app_pid.stdout }}
+      when: app_pid.stdout != ""
+      ignore_errors: true
+
+    - name: Run in background
+      ansible.builtin.shell:
+        cmd: nohup go run . > {{ log_dir }}/app.log 2>&1 &
+        chdir: "{{ app_dir }}"

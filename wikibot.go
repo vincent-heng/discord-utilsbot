@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -15,95 +13,110 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/knakk/sparql"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
-
-// Configuration filled from configuration file
-type Configuration struct {
-	DiscordBotKey string
-	TimeOut       time.Duration
-	MaxChars      int
-	MaxSentences  int
-	WarningChars  int
-}
 
 var (
-	configuration *Configuration
+	configuration   *Configuration
+	dg              *discordgo.Session
+	commands        []*discordgo.ApplicationCommand
+	commandHandlers = make(map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate))
 )
 
-func main() {
+func init() {
+	log.Println("Configuration loading...")
+
+	// Configuration
 	conf, err := loadConfiguration("config.json")
 	if err != nil {
 		log.Fatal("Can't load config file:", err)
 	}
 	configuration = &conf
 
-	rand.Seed(time.Now().UTC().UnixNano())
+	// Use "und" for undetermined language
+	lang := language.Und
+	// Create a Title caser
+	titleCaser := cases.Title(lang)
+
+	rand.Seed(time.Now().UTC().UnixNano()) // Deprecated as of 1.20
 
 	// Discord
-	dg, err := discordgo.New("Bot " + configuration.DiscordBotKey)
+	dg, err = discordgo.New("Bot " + configuration.DiscordBotKey)
 	if err != nil {
 		log.Fatalf("error creating Discord session: %v", err)
 	}
 
-	// Register the messageCreate func as a callback for MessageCreate events.
-	dg.AddHandler(messageCreate)
-
-	// Open a websocket connection to Discord and begin listening.
-	err = dg.Open()
-	if err != nil {
-		fmt.Println("error opening connection,", err)
-		return
+	commands = []*discordgo.ApplicationCommand{
+		{
+			Name:        "wiki",
+			Description: "Recherche la description Wikipédia",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "recherche",
+					Description: "Mot recherché. Laisser vide pour recherche aléatoire",
+					Required:    false,
+				},
+			},
+		},
 	}
 
-	// Wait here until CTRL-C or other term signal is received.
-	fmt.Println("Bot is now running.  Press CTRL-C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
-	<-sc
+	commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
+		"wiki": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			options := i.ApplicationCommandData().Options
+			search := ""
+			if len(options) > 0 {
+				search = options[0].StringValue()
+			}
 
-	// Cleanly close down the Discord session.
-	dg.Close()
+			abstract := fetchWikipediaAbstract(search, true)
+			if abstract == "No content." {
+				log.Println("No content, trying Camel Case")
+				abstract = fetchWikipediaAbstract(titleCaser.String(search), false)
+			}
+			if abstract == "No content." {
+				log.Println("No content, trying fault tolerancy")
+				abstract = fetchWikipediaAbstract(search, true)
+			}
+
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: abstract,
+				},
+			})
+		},
+	}
+
+	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
+			h(s, i)
+		}
+	})
 }
 
-// This function will be called (due to AddHandler above) every time a new
-// message is created on any channel that the autenticated bot has access to.
-func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+func main() {
+	log.Printf("Starting...")
 
-	// Ignore all messages created by the bot itself
-	if m.Author.ID == s.State.User.ID {
+	dg.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
+		log.Printf("Logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
+	})
+
+	// Open a websocket connection to Discord and begin listening.
+	err := dg.Open()
+	if err != nil {
+		log.Println("error opening connection,", err)
 		return
 	}
+	dg.ApplicationCommandBulkOverwrite(configuration.ApiID, "", commands)
+	defer dg.Close() // Cleanly close down the Discord session after function termination
 
-	if strings.HasPrefix(m.Content, "!wiki ") {
-		name := strings.TrimSpace(strings.TrimPrefix(m.Content, "!wiki"))
-		log.Printf("Request: %v", name)
-
-		abstract := fetchWikipediaAbstract(name, false)
-
-		if abstract == "No content." {
-			log.Println("No content, trying Camel Case")
-			abstract = fetchWikipediaAbstract(strings.Title(name), false)
-		}
-		if abstract == "No content." {
-			log.Println("No content, trying fault tolerancy")
-			abstract = fetchWikipediaAbstract(name, true)
-		}
-
-		log.Printf("Response: %v", abstract)
-
-		// Send
-		s.ChannelMessageSend(m.ChannelID, abstract)
-	} else if m.Content == "!wiki" {
-		// Random page
-		log.Printf("Request a random page")
-
-		abstract := fetchRandomWikipediaAbstract()
-
-		log.Printf("Response: %v", abstract)
-
-		// Send
-		s.ChannelMessageSend(m.ChannelID, abstract)
-	}
+	// Wait here until CTRL-C or other term signal is received.
+	log.Println("Bot is now running.  Press CTRL-C to exit.")
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	<-sc
 }
 
 func fetchRandomWikipediaAbstract() string {
@@ -123,11 +136,11 @@ func fetchRandomWikipediaAbstract() string {
 	log.Printf("Random number generated: %v", someRandomNumber)
 
 	formattedQuery := `SELECT distinct ?label ?abstract WHERE {
-		?categorie dbpedia-owl:abstract ?abstract .
+		?categorie dbo:abstract ?abstract .
 		?categorie rdfs:label ?label
 		filter langMatches(lang(?abstract),'fr')
 	}
-	ORDER BY ?s OFFSET ` + strconv.Itoa(someRandomNumber) + ` LIMIT 1
+	OFFSET ` + strconv.Itoa(someRandomNumber) + ` LIMIT 1
 	`
 
 	res, err := repo.Query(formattedQuery)
@@ -144,6 +157,10 @@ func fetchRandomWikipediaAbstract() string {
 }
 
 func fetchWikipediaAbstract(query string, faultTolerant bool) string {
+	if len(query) == 0 {
+		return fetchRandomWikipediaAbstract()
+	}
+
 	repo, err := sparql.NewRepo("http://fr.dbpedia.org/sparql",
 		sparql.DigestAuth("dba", "dba"),
 		sparql.Timeout(time.Millisecond*configuration.TimeOut),
@@ -163,14 +180,14 @@ func fetchWikipediaAbstract(query string, faultTolerant bool) string {
 	if !faultTolerant {
 		formattedQuery = `SELECT ?abstract WHERE {
 	       ?categorie rdfs:label "` + query + `"@fr .
-	       ?categorie dbpedia-owl:abstract ?abstract
+	       ?categorie dbo:abstract ?abstract
 				 filter langMatches(lang(?abstract),'fr')
 	    } LIMIT 1`
 	} else {
 		formattedQuery = `SELECT ?abstract WHERE {
 	       ?categorie rdfs:label ?mylabel .
 	       ?mylabel bif:contains "'` + query + `'" .
-	       ?categorie dbpedia-owl:abstract ?abstract
+	       ?categorie dbo:abstract ?abstract
 				 filter langMatches(lang(?abstract),'fr')
 	    } LIMIT 1`
 
@@ -231,18 +248,4 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// loadConfiguration loads configuration from json file
-func loadConfiguration(configurationFile string) (Configuration, error) {
-	configuration := Configuration{}
-
-	file, err := os.Open(configurationFile)
-	if err != nil {
-		return configuration, err
-	}
-	defer file.Close()
-	decoder := json.NewDecoder(file)
-	err = decoder.Decode(&configuration)
-	return configuration, err
 }
